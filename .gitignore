@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+
+# downloaded source models (re-fetched by make_meshes.py)
+meshes/downloads/
+
+# per-run arrays (re-created by run_experiments.py)
+results/data/

@@ -1,0 +1,14 @@
+# Tested with Python 3.11 on Windows 11.
+numpy==2.2.6
+scipy==1.14.1
+matplotlib==3.9.3
+trimesh==4.6.1
+networkx==3.4.2          # used by trimesh to make face winding consistent
+pygeodesic==0.1.11       # exact polyhedral geodesic distances (MMP algorithm)
+
+# Mesh preparation (make_meshes.py)
+pymeshlab==2025.7.post1
+
+# Tests
+pytest==9.1.1
+libigl==2.6.3            # reference LSCM and ARAP used to cross-check our implementations
