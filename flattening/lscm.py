@@ -13,7 +13,8 @@ import scipy.sparse.linalg as spla
 from .common import boundary_loop, cotan_laplacian, edge_lengths
 
 
-def flatten(V, F):
+def conformal_matrix(V, F):
+    """Q with E_C = 1/2 x^T Q x for x = [u; v], and the boundary loop."""
     n = len(V)
     L = cotan_laplacian(edge_lengths(V, F), F, n)
 
@@ -25,12 +26,23 @@ def flatten(V, F):
     A_vec = sp.csr_matrix((np.concatenate([q, q, -q, -q]),
                            (np.concatenate([i, j + n, j, i + n]),
                             np.concatenate([j + n, i, i + n, j]))), shape=(2 * n, 2 * n))
-    Q = (sp.block_diag([L, L]) - 2 * A_vec).tocsr()
+    return (sp.block_diag([L, L]) - 2 * A_vec).tocsr(), b
 
-    # Pin the two boundary vertices that are farthest apart.
+
+def farthest_boundary_pair(V, b):
+    """The two boundary vertices that are farthest apart in 3D."""
     D = np.linalg.norm(V[b][:, None, :] - V[b][None, :, :], axis=2)
     p, r = np.unravel_index(np.argmax(D), D.shape)
-    pinned = np.array([b[p], b[r], b[p] + n, b[r] + n])
+    return b[p], b[r]
+
+
+def flatten(V, F):
+    n = len(V)
+    Q, b = conformal_matrix(V, F)
+
+    # Pin the two boundary vertices that are farthest apart.
+    p, r = farthest_boundary_pair(V, b)
+    pinned = np.array([p, r, p + n, r + n])
     x_pinned = np.array([0.0, 1.0, 0.0, 0.0])
     free = np.setdiff1d(np.arange(2 * n), pinned)
 

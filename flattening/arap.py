@@ -11,28 +11,14 @@ between two iterations falls below tol * (mean edge length).
 import numpy as np
 import scipy.sparse.linalg as spla
 
-from .common import boundary_loop, cotan_laplacian, cotangents, edge_lengths, harmonic_extension
-
-
-def local_frames(V, F):
-    """(m, 3, 2) isometric 2D coordinates of each triangle's corners (corner 0 at the origin)."""
-    e1 = V[F[:, 1]] - V[F[:, 0]]
-    e2 = V[F[:, 2]] - V[F[:, 0]]
-    l1 = np.linalg.norm(e1, axis=1)
-    X = np.zeros((len(F), 3, 2))
-    X[:, 1, 0] = l1
-    X[:, 2, 0] = np.einsum("ij,ij->i", e2, e1) / l1
-    X[:, 2, 1] = np.linalg.norm(np.cross(e1, e2), axis=1) / l1
-    return X
+from .common import (boundary_loop, circle_boundary, cotan_laplacian, cotangents, edge_lengths,
+                     harmonic_extension, local_frames)
 
 
 def harmonic_initialization(V, F, L):
     """Harmonic map with the boundary on a circle, spaced by arc length."""
     b = boundary_loop(F)
-    seg = np.linalg.norm(V[np.roll(b, -1)] - V[b], axis=1)
-    t = 2 * np.pi * np.concatenate([[0.0], np.cumsum(seg)[:-1]]) / seg.sum()
-    radius = seg.sum() / (2 * np.pi)
-    return harmonic_extension(L, b, radius * np.stack([np.cos(t), np.sin(t)], axis=1))
+    return harmonic_extension(L, b, circle_boundary(V, b))
 
 
 def flatten(V, F, tol=1e-6, max_iter=10000):

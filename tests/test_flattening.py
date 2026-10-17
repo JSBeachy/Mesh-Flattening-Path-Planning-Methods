@@ -1,4 +1,4 @@
-"""Correctness tests for the four flattening methods."""
+"""Correctness tests shared by the flattening methods, and for the paper's four methods."""
 import os
 import sys
 
@@ -8,7 +8,7 @@ from scipy.spatial import Delaunay
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flattening import METHODS, arap, bff, cetm, lscm  # noqa: E402
+from flattening import METHODS, arap, bff, cetm, lscm, slim  # noqa: E402
 from flattening.common import (boundary_loop, check_disk, corner_angles, cotan_laplacian,  # noqa: E402
                                edge_lengths, vertex_angle_sums)
 from evaluation import angle_distortion_deg, log_area_ratio, signed_areas_2d  # noqa: E402
@@ -121,13 +121,19 @@ def test_cetm_energy_gradient():
 # ----------------------------------------------------------------------------------------
 # Whole methods
 # ----------------------------------------------------------------------------------------
-@pytest.mark.parametrize("name", list(METHODS))
+# Methods whose optimum on a developable surface is its isometric development (up to a similarity).
+# DEM (area-preserving from a Tutte start) and Floater (fixed circular boundary) are not.
+ISOMETRIC_ON_DEVELOPABLE = ["LSCM", "BFF", "CETM", "ARAP", "SCP", "ABF++", "SLIM", "MDS"]
+
+
+@pytest.mark.parametrize("name", ISOMETRIC_ON_DEVELOPABLE)
 def test_developable_surface_is_flattened_isometrically(name):
     V, F = folded_sheet()
-    UV = METHODS[name](V, F)
+    # SLIM converges linearly; at its default tolerance it is 4e-4 degrees from the isometry.
+    UV = slim.flatten(V, F, tol=1e-14) if name == "SLIM" else METHODS[name](V, F)
     assert np.all(signed_areas_2d(UV, F) > 0)
     assert np.abs(log_area_ratio(V, F, UV)).max() < 1e-6
-    assert angle_distortion_deg(V, F, UV) < 1e-4  # ARAP stops at a finite tolerance
+    assert angle_distortion_deg(V, F, UV) < 1e-4  # ARAP and SLIM stop at a finite tolerance
 
 
 @pytest.mark.parametrize("name", list(METHODS))
@@ -186,11 +192,12 @@ def test_cetm_layout_realizes_flat_metric():
     assert np.abs(vertex_angle_sums(edge_lengths(UV, F), F, n)[interior] - 2 * np.pi).max() < 1e-8
 
 
-def test_conformal_methods_have_low_angle_distortion():
+def test_methods_trade_angle_for_area_distortion_as_designed():
     V, F = spherical_cap(20, np.radians(70))
-    conf = [angle_distortion_deg(V, F, METHODS[m](V, F)) for m in ["LSCM", "BFF", "CETM"]]
-    rigid = angle_distortion_deg(V, F, METHODS["ARAP"](V, F))
-    assert max(conf) < rigid
-    area_conf = [np.abs(log_area_ratio(V, F, METHODS[m](V, F))).mean() for m in ["LSCM", "BFF", "CETM"]]
-    area_rigid = np.abs(log_area_ratio(V, F, METHODS["ARAP"](V, F))).mean()
-    assert area_rigid < min(area_conf)
+    UV = {m: METHODS[m](V, F) for m in ["LSCM", "BFF", "CETM", "SCP", "ABF++", "ARAP", "SLIM", "DEM"]}
+    angle = {m: angle_distortion_deg(V, F, uv) for m, uv in UV.items()}
+    area = {m: np.abs(log_area_ratio(V, F, uv)).mean() for m, uv in UV.items()}
+    conformal, isometric = ["LSCM", "BFF", "CETM", "SCP", "ABF++"], ["ARAP", "SLIM"]
+    assert max(angle[m] for m in conformal) < min(angle[m] for m in isometric)
+    assert max(area[m] for m in isometric) < min(area[m] for m in conformal)
+    assert area["DEM"] < min(area[m] for m in conformal + isometric)  # area-preserving

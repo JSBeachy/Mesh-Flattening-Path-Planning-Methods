@@ -11,4 +11,4 @@ pymeshlab==2025.7.post1
 
 # Tests
 pytest==9.1.1
-libigl==2.6.3            # reference LSCM and ARAP used to cross-check our implementations
+libigl==2.6.3            # reference LSCM, ARAP and SLIM used to cross-check our implementations

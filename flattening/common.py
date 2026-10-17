@@ -1,4 +1,4 @@
-"""Mesh utilities shared by the four flattening methods.
+"""Mesh utilities shared by the flattening methods.
 
 Conventions used throughout:
   * V is a (n, 3) array of vertex positions, F a (m, 3) array of vertex indices.
@@ -130,8 +130,62 @@ def vertex_angle_sums(l, F, n):
     return np.bincount(F.ravel(), corner_angles(l).ravel(), minlength=n)
 
 
+def uniform_laplacian(F, n):
+    """Graph Laplacian with unit edge weights (Tutte's barycentric embedding)."""
+    E = np.unique(np.sort(np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]]), axis=1), axis=0)
+    i, j, w = E[:, 0], E[:, 1], np.ones(len(E))
+    return sp.csr_matrix((np.concatenate([-w, -w, w, w]),
+                          (np.concatenate([i, j, i, j]), np.concatenate([j, i, i, j]))), shape=(n, n))
+
+
+def local_frames(V, F):
+    """(m, 3, 2) isometric 2D coordinates of each triangle's corners (corner 0 at the origin, edge 0-1 along x)."""
+    e1 = V[F[:, 1]] - V[F[:, 0]]
+    e2 = V[F[:, 2]] - V[F[:, 0]]
+    l1 = np.linalg.norm(e1, axis=1)
+    X = np.zeros((len(F), 3, 2))
+    X[:, 1, 0] = l1
+    X[:, 2, 0] = np.einsum("ij,ij->i", e2, e1) / l1
+    X[:, 2, 1] = np.linalg.norm(np.cross(e1, e2), axis=1) / l1
+    return X
+
+
+def gradient_operators(V, F):
+    """Sparse (m, n) matrices Dx, Dy giving the gradient of a piecewise-linear function in each
+    triangle's local frame. The Jacobian of a map UV is J = [[Dx u, Dy u], [Dx v, Dy v]]."""
+    X = local_frames(V, F)
+    a, b, c = X[:, 1, 0], X[:, 2, 0], X[:, 2, 1]  # edge matrix [x1 - x0, x2 - x0] = [[a, b], [0, c]]
+    rows = np.repeat(np.arange(len(F)), 3)
+    dx = np.stack([-1 / a, 1 / a, np.zeros_like(a)], axis=1)
+    dy = np.stack([b / (a * c) - 1 / c, -b / (a * c), 1 / c], axis=1)
+    shape = (len(F), len(V))
+    return (sp.csr_matrix((dx.ravel(), (rows, F.ravel())), shape=shape),
+            sp.csr_matrix((dy.ravel(), (rows, F.ravel())), shape=shape))
+
+
+def signed_areas_2d(UV, F):
+    a, b = UV[F[:, 1]] - UV[F[:, 0]], UV[F[:, 2]] - UV[F[:, 0]]
+    return 0.5 * (a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0])
+
+
+def orient_ccw(UV, F):
+    """Mirror a map whose total signed area is negative (some methods fix the map only up to a reflection)."""
+    return UV * np.array([-1.0, 1.0]) if signed_areas_2d(UV, F).sum() < 0 else UV
+
+
+def circle_boundary(V, b):
+    """Boundary vertices on a circle with the same circumference as the boundary, spaced by arc length."""
+    seg = np.linalg.norm(V[np.roll(b, -1)] - V[b], axis=1)
+    t = 2 * np.pi * np.concatenate([[0.0], np.cumsum(seg)[:-1]]) / seg.sum()
+    return seg.sum() / (2 * np.pi) * np.stack([np.cos(t), np.sin(t)], axis=1)
+
+
 def harmonic_extension(L, b, xb):
-    """Solve the Dirichlet problem L_II x_I = -L_IB x_B; returns x for all vertices."""
+    """Solve the Dirichlet problem L_II x_I = -L_IB x_B; returns x for all vertices.
+
+    L may be any (possibly non-symmetric) Laplacian-like matrix, e.g. with
+    uniform (Tutte), mean-value (Floater) or cotangent weights.
+    """
     n = L.shape[0]
     interior = np.setdiff1d(np.arange(n), b)
     x = np.zeros((n, xb.shape[1]))
