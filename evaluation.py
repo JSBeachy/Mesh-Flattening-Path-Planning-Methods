@@ -3,22 +3,19 @@
   * area distortion log(A3D / A2D) per face,
   * center-to-boundary geodesic deviation (CBGD, Eq. 26),
   * spiral path generation in the UV domain and barycentric back-projection (Eq. 22),
-  * end-effector poses along the path (Eqs. 23-24).
+  * end-effector poses along the path (Eqs. 23-24),
+  * validity: flipped triangles and boundary self-intersections (global overlaps).
 """
 import numpy as np
 from matplotlib.path import Path
 from pygeodesic.geodesic import PyGeodesicAlgorithmExact
 from scipy.spatial.transform import Rotation
 
-from flattening.common import corner_angles, edge_lengths
+from flattening.common import corner_angles, edge_lengths, signed_areas_2d  # noqa: F401 (re-exported)
 
 
 def _cross2(a, b):
     return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
-
-
-def signed_areas_2d(UV, F):
-    return 0.5 * _cross2(UV[F[:, 1]] - UV[F[:, 0]], UV[F[:, 2]] - UV[F[:, 0]])
 
 
 def face_areas_3d(V, F):
@@ -35,6 +32,27 @@ def log_area_ratio(V, F, UV):
 def angle_distortion_deg(V, F, UV):
     """Mean absolute difference between 3D and 2D corner angles, in degrees (extra metric)."""
     return np.degrees(np.abs(corner_angles(edge_lengths(UV, F)) - corner_angles(edge_lengths(V, F)))).mean()
+
+
+def boundary_self_intersections(UV, boundary):
+    """Number of pairs of non-adjacent boundary edges that cross in the UV domain (0: simple polygon).
+
+    Together with the flipped-triangle count this decides global injectivity: a
+    map without flipped triangles whose boundary is a simple polygon is one-to-one.
+    """
+    a, b = UV[boundary], UV[np.roll(boundary, -1)]
+    nb = len(boundary)
+    j = np.arange(nb)
+    count = 0
+    for s in range(0, nb, 256):
+        i = np.arange(s, min(s + 256, nb))
+        p, q = a[i, None], b[i, None]
+        d1, d2 = _cross2(q - p, a[None] - p), _cross2(q - p, b[None] - p)
+        d3, d4 = _cross2(b[None] - a[None], p - a[None]), _cross2(b[None] - a[None], q - a[None])
+        gap = np.abs(i[:, None] - j[None])
+        candidate = (j[None] > i[:, None]) & (gap > 1) & (gap < nb - 1)
+        count += int(np.sum((d1 * d2 < 0) & (d3 * d4 < 0) & candidate))
+    return count
 
 
 def normalize_uv(UV, size=1.0):

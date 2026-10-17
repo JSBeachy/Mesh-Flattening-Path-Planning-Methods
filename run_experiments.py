@@ -1,10 +1,13 @@
-"""Run the four flattening methods on every test mesh and evaluate them (paper Sec. 3).
+"""Run the flattening methods on every test mesh and evaluate them (paper Sec. 3).
 
 Writes results/summary.csv (one row per object and method) and the per-run
 arrays in results/data/*.npz that make_figures.py plots.
 
-Usage:  python run_experiments.py
+Usage:
+  python run_experiments.py                       all methods
+  python run_experiments.py --methods LSCM,SCP    only these; the other rows of summary.csv are kept
 """
+import argparse
 import csv
 import os
 import time
@@ -12,7 +15,7 @@ import time
 import numpy as np
 
 import evaluation as ev
-from flattening import METHODS
+from flattening import FAMILY, METHODS
 from flattening.common import boundary_loop, load_mesh
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -31,7 +34,7 @@ OBJECTS = [
     ("four_sided_star", "Four-sided star", "Four-sided star"),
     ("car_body", "Car body", "Car body"),
 ]
-TIMING_RUNS = 3          # the reported time is the median of these runs
+REPEAT_BELOW = 60.0      # methods faster than this (seconds) are timed 3 times and the median is reported
 UV_FRAME = 100.0         # path planning frame: UV scaled to [0, 100] (paper Sec. 2.2)
 SPIRAL_TURNS, SPIRAL_STEP = 3, 3.2
 
@@ -63,6 +66,7 @@ def evaluate(V, F, boundary, geo, p_true, UV):
     row = {
         "flipped_faces": int(np.sum(signed <= 0)),
         "boundary_area_positive": bool(signed.sum() > 0),  # paper's validity check (i)
+        "boundary_self_intersections": ev.boundary_self_intersections(uv, boundary),
         "mean_abs_log_area": float(np.abs(log_area).mean()),
         "mean_abs_angle_deg": float(ev.angle_distortion_deg(V, F, uv)),
         "cbgd_mean_pct": float(100 * np.abs(delta).mean()),
@@ -82,9 +86,33 @@ def evaluate(V, F, boundary, geo, p_true, UV):
     return row, arrays
 
 
+def run_method(flatten, V, F):
+    """Flatten and time it: three runs (median reported) unless the first takes REPEAT_BELOW seconds or more."""
+    times = []
+    while True:
+        t0 = time.perf_counter()
+        UV = flatten(V, F)
+        times.append(time.perf_counter() - t0)
+        if len(times) == 3 or times[0] >= REPEAT_BELOW:
+            return UV, times
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--methods", default=",".join(METHODS), help="comma-separated methods (default: all)")
+    chosen = {m for m in parser.parse_args().methods.split(",") if m}
+    if chosen - set(METHODS):
+        raise SystemExit(f"unknown method(s): {', '.join(sorted(chosen - set(METHODS)))}; "
+                         f"choose from {', '.join(METHODS)}")
+    methods = [m for m in METHODS if m in chosen]
+
     os.makedirs(DATA, exist_ok=True)
-    rows = []
+    summary = os.path.join(RESULTS, "summary.csv")
+    rows = {}
+    if os.path.exists(summary):  # rows of methods that are not run now are kept
+        with open(summary) as f:
+            rows = {(r["object"], r["method"]): r for r in csv.DictReader(f)}
+
     for key, name, paper_name in OBJECTS:
         path = os.path.join(MESH_DIR, key + ".obj")
         if not os.path.exists(path):
@@ -96,34 +124,36 @@ def main():
         np.savez_compressed(os.path.join(DATA, f"{key}__mesh.npz"), V=V, F=F, boundary=boundary, p_true=p_true,
                             s=ev.boundary_parameter(V, boundary))
         print(f"{name}: {len(V)} vertices, {len(F)} faces, {len(boundary)} boundary vertices")
-        for method, flatten in METHODS.items():
-            times = []
-            for _ in range(TIMING_RUNS):
-                t0 = time.perf_counter()
-                UV = flatten(V, F)
-                times.append(time.perf_counter() - t0)
+        for method in methods:
+            UV, times = run_method(METHODS[method], V, F)
             if not np.all(np.isfinite(UV)):
                 raise RuntimeError(f"{method} produced non-finite UVs on {name}")
             row, arrays = evaluate(V, F, boundary, geo, p_true, UV)
             np.savez_compressed(os.path.join(DATA, f"{key}__{method}.npz"), times=times, **arrays)
-            rows.append({"object": name, "paper_object": paper_name, "method": method, "vertices": len(V),
-                         "faces": len(F), "boundary_vertices": len(boundary), "true_center": p_true,
-                         "time_s": float(np.median(times)), **row})
-            print(f"  {method:5s} time {np.median(times):7.3f} s | |log area| {row['mean_abs_log_area']:.3f} | "
+            rows[(name, method)] = {"object": name, "paper_object": paper_name, "method": method,
+                                    "family": FAMILY[method], "vertices": len(V), "faces": len(F),
+                                    "boundary_vertices": len(boundary), "true_center": p_true,
+                                    "time_s": float(np.median(times)), "timing_runs": len(times), **row}
+            print(f"  {method:7s} time {np.median(times):8.3f} s | |log area| {row['mean_abs_log_area']:.3f} | "
                   f"angle {row['mean_abs_angle_deg']:5.2f} deg | CBGD {row['cbgd_mean_pct']:6.2f} % "
-                  f"(max {row['cbgd_max_pct']:6.2f} %) | flips {row['flipped_faces']}")
+                  f"(max {row['cbgd_max_pct']:6.2f} %) | flips {row['flipped_faces']} | "
+                  f"overlaps {row['boundary_self_intersections']}")
 
-    with open(os.path.join(RESULTS, "summary.csv"), "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+    ordered = [rows[(name, m)] for _, name, _ in OBJECTS for m in METHODS if (name, m) in rows]
+    fields = list(next(r for r in ordered if r["method"] in methods))
+    with open(summary, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(ordered)
 
     print("\nMean +- std over objects:")
     for method in METHODS:
-        r = [x for x in rows if x["method"] == method]
-        stats = {k: (np.mean([x[k] for x in r]), np.std([x[k] for x in r]))
+        r = [x for x in ordered if x["method"] == method]
+        if len(r) != len(OBJECTS):
+            continue
+        stats = {k: (np.mean([float(x[k]) for x in r]), np.std([float(x[k]) for x in r]))
                  for k in ["cbgd_mean_pct", "mean_abs_log_area", "mean_abs_angle_deg", "time_s"]}
-        print(f"  {method:5s} CBGD {stats['cbgd_mean_pct'][0]:5.2f} +- {stats['cbgd_mean_pct'][1]:5.2f} % | "
+        print(f"  {method:7s} CBGD {stats['cbgd_mean_pct'][0]:5.2f} +- {stats['cbgd_mean_pct'][1]:5.2f} % | "
               f"|log area| {stats['mean_abs_log_area'][0]:.3f} | angle {stats['mean_abs_angle_deg'][0]:5.2f} deg | "
               f"time {stats['time_s'][0]:.3f} +- {stats['time_s'][1]:.3f} s")
 

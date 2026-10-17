@@ -9,9 +9,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scipy.spatial.transform import Rotation  # noqa: E402
 
-from evaluation import (Geodesics, angle_distortion_deg, back_project, cbgd, locate,  # noqa: E402
-                        log_area_ratio, mapped_center, pole_of_inaccessibility, spiral_path,
-                        tool_poses, true_center)
+from evaluation import (Geodesics, angle_distortion_deg, back_project, boundary_self_intersections,  # noqa: E402
+                        cbgd, locate, log_area_ratio, mapped_center, pole_of_inaccessibility,
+                        spiral_path, tool_poses, true_center)
 from flattening.common import boundary_loop  # noqa: E402
 from test_flattening import disk_mesh, spherical_cap  # noqa: E402
 
@@ -83,6 +83,18 @@ def test_tool_poses_are_proper_rotations_facing_the_surface():
     d = P[1] - P[0]
     assert np.dot(R[0, :, 0], d - np.dot(d, n[0]) * n[0]) > 0  # x axis points toward the next via point
     assert np.allclose(positions, P + 0.1 * n)
+
+
+def test_boundary_self_intersections():
+    square = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=float)
+    assert boundary_self_intersections(square, np.arange(4)) == 0
+    bowtie = np.array([[0, 0], [1, 1], [1, 0], [0, 1]], dtype=float)  # edges 0-1 and 2-3 cross
+    assert boundary_self_intersections(bowtie, np.arange(4)) == 1
+    a = np.linspace(0, 4 * np.pi, 400, endpoint=False)               # a circle traversed twice
+    twice = np.stack([np.cos(a), np.sin(a)], axis=1) * (1 + 0.01 * (a > 2 * np.pi))[:, None]
+    assert boundary_self_intersections(twice, np.arange(400)) > 0
+    P, F = disk_mesh(8)
+    assert boundary_self_intersections(P, boundary_loop(F)) == 0
 
 
 def test_spiral_path_is_inside_and_evenly_spaced():
