@@ -1,4 +1,4 @@
-# Mesh flattening for 3D path planning: a replication of Mahrukh et al. (Robotics 2025)
+# Mesh flattening for 3D path planning: a replication of Mahrukh et al. (Robotics 2025), extended to ten methods
 
 This repository re-implements and re-runs the comparison in
 
@@ -10,11 +10,16 @@ This repository re-implements and re-runs the comparison in
 The paper flattens open 3D meshes with four free-boundary parameterizations (LSCM, BFF, ARAP,
 CETM), plans a spiral path in the 2D domain, maps it back to 3D, and compares the methods by
 area distortion and a new **center-to-boundary geodesic deviation (CBGD)**. Here the four methods
-are implemented from scratch with NumPy/SciPy, one module per method. They run on eight open,
-disk-topology meshes chosen to resemble the paper's objects, and are evaluated with the paper's
-measures plus a few extra ones.
+are implemented from scratch with NumPy/SciPy, one module per method, and **six more methods**
+are added: two conformal methods the paper leaves out (SCP, ABF++), the isometric SLIM, a
+distance-preserving (MDS) and an area-preserving (DEM) flattening, and a fixed-boundary baseline
+(Floater). All ten run on eight open, disk-topology meshes chosen to resemble the paper's objects
+and are evaluated with the paper's measures plus a few extra ones (angle distortion, path spacing,
+validity).
 
-## Headline result
+## Headline results
+
+### Replication: the paper's four methods
 
 | | LSCM | BFF | CETM | ARAP |
 |---|---:|---:|---:|---:|
@@ -44,6 +49,75 @@ measures plus a few extra ones.
 - **Absolute values.** Only the lilium is the paper's source model, so absolute numbers are not
   directly comparable.
 
+### Extension: six more methods
+
+The six added methods go through the same pipeline (same meshes, CBGD, spiral path, poses,
+timing) plus a validity check:
+
+| | Year | Preserves | Boundary | Module |
+|---|---:|---|---|---|
+| **SCP**, spectral conformal parameterization (Mullen et al.) | 2008 | angles | free, no pinned vertices | [scp.py](flattening/scp.py) |
+| **ABF++**, angle based flattening (Sheffer et al.) | 2005 | angles, solved in angle space | free | [abf.py](flattening/abf.py) |
+| **SLIM**, scalable locally injective mappings (Rabinovich et al.) | 2017 | lengths (symmetric Dirichlet), no flips | free | [slim.py](flattening/slim.py) |
+| **MDS**, flattening by multidimensional scaling (Zigelman et al.) | 2002 | geodesic distances | free | [mds.py](flattening/mds.py) |
+| **DEM**, density-equalizing map (Choi & Rycroft) | 2018 | areas | free | [dem.py](flattening/dem.py) |
+| **Floater**, mean value coordinates (Floater) | 2003 | baseline, bijective | fixed circle | [floater.py](flattening/floater.py) |
+
+Why these:
+- SCP and ABF++ are the conformal methods the paper leaves out. SCP removes LSCM's dependence on
+  its two pinned vertices (see *Notes*); ABF++ is the algorithm behind Blender's "Angle Based"
+  unwrap.
+- SLIM minimizes the standard isometric distortion energy and is behind Blender's "Minimum
+  Stretch" unwrap (since 4.3); it is ARAP's main modern competitor.
+- MDS targets geodesic distances, the quantity CBGD measures, and DEM targets areas, the
+  quantity the paper uses to explain CBGD. Both test that explanation directly.
+- Floater's fixed circular boundary shows what the paper's free boundaries buy.
+
+Means over the 8 objects (the paper's methods first):
+
+| | CBGD (%) | Area distortion | Angle distortion (deg) | Path step error (%) | Steps off > 20 % | Invalid maps | Time (s) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| LSCM | 9.01 +- 12.18 | 0.328 | 0.37 | 13.4 | 21.5 | 0 | 0.135 |
+| BFF | 4.73 +- 5.62 | 0.280 | 0.37 | 10.1 | 15.2 | 0 | 0.092 |
+| CETM | 4.88 +- 5.91 | 0.280 | 0.36 | 10.1 | 15.2 | 0 | 0.324 |
+| ARAP | **2.87 +- 3.51** | 0.113 | 3.66 | **7.9** | **9.6** | 0 | 1.85 |
+| SCP | 8.27 +- 10.20 | 0.331 | 0.37 | 13.2 | 20.6 | 0 | 0.261 |
+| ABF++ | 4.55 +- 6.06 | 0.281 | **0.36** | 10.7 | 16.6 | 0 | 1.42 |
+| SLIM | 4.37 +- 5.92 | **0.095** | 3.75 | 8.5 | 10.2 | 0 | 26.7 |
+| MDS | 4.65 +- 4.59 | 0.105 | 7.38 | 10.0 | 13.0 | 1 | 47.0 |
+| DEM | 6.71 +- 7.45 | 0.229 | 14.74 | 20.7 | 27.2 | 4 | 5.02 |
+| Floater | 5.78 +- 6.38 | 0.368 | 11.54 | 12.9 | 20.9 | 0 | 0.050 |
+
+"Invalid maps" counts objects with flipped triangles or crossing boundary edges. The tables in
+[results/tables.md](results/tables.md) give every value per object.
+
+**Findings:**
+- **None of the six beats ARAP for this pipeline.** ARAP keeps the lowest mean CBGD (2.87 %) and
+  the best path spacing (7.9 % mean step error, 9.6 % of steps off by more than 20 %). SLIM,
+  which minimizes a different isometric energy, is second on path spacing (8.5 %) and has the
+  least area distortion of all methods (0.095), but on the animal head its CBGD is 17.2 % against
+  ARAP's 5.3 %.
+- **Less area distortion does not mean less deviation.** On every object the least
+  area-distorting map comes from DEM, MDS or SLIM, never from ARAP, yet that map has a higher CBGD
+  than ARAP's on 4 of the 8 objects and a lower one on only 2. Per object, the rank correlation
+  across the ten methods between CBGD and area distortion is weak (median Spearman rho 0.26)
+  and stronger with the path step error (0.52). The area-preserving DEM has the worst path
+  spacing (20.7 %): it keeps areas by shearing, which distorts lengths. For spiral paths,
+  preserving lengths (ARAP, SLIM) matters more than preserving areas.
+- **The extra conformal methods change little.** ABF++ has the lowest angle distortion and is level
+  with BFF and CETM (4.55 % CBGD). SCP removes LSCM's pinned vertices but is just as lopsided on the
+  animal head (29.7 %).
+- **Validity separates the methods.** ARAP, SLIM, the conformal methods and Floater never fold. MDS
+  folds the animal head (2,568 flipped triangles); DEM folds four objects, fails outright on the
+  animal head, and is the method whose results swing most between remeshings.
+- **CBGD alone can mislead.** Floater's fixed circle gives the highest area distortion and a
+  12.9 % step error, yet its CBGD (5.8 %) beats LSCM's and SCP's, because CBGD only checks where
+  the center lands.
+- **Cost.** Floater, BFF, LSCM, SCP and CETM take well under a second per mesh, ABF++ and ARAP one
+  to two seconds on average, DEM 5 s (33 s on the animal head), and SLIM and MDS tens of seconds
+  (27 s and 47 s on average, about 170 s each on the animal head; MDS spends its time on exact
+  geodesics from 128 landmarks).
+
 ## Quick start
 
 ```bash
@@ -51,29 +125,34 @@ python -m venv .venv
 .venv\Scripts\activate            # Windows  (Linux/macOS: source .venv/bin/activate)
 pip install -r requirements.txt
 
-python run_experiments.py         # flatten + evaluate all 8 meshes x 4 methods (~1.5 min)
-python make_figures.py            # figures in results/figures, tables in results/tables.md
-python -m pytest                  # 24 correctness tests (~3 s)
-python make_meshes.py             # optional: rebuild meshes/ from scratch (~1.5 min, needs internet)
+python run_experiments.py   # flatten + evaluate 8 meshes x 10 methods (~25 min)
+python make_figures.py      # figures in results/figures, tables in results/tables.md
+python -m pytest            # 49 correctness tests (~10 s)
+python make_meshes.py       # optional: rebuild meshes/ from scratch (~1.5 min, needs internet)
 ```
 
-The committed meshes are the exact ones behind the reported numbers. PyMeshLab's remeshing is
-not bit-reproducible across runs, so `make_meshes.py` gives slightly different meshes each time
-(see *Robustness*).
+- `--methods LSCM,BFF,CETM,ARAP` runs only those methods (the paper's four take ~1.5 min); the
+  other rows of `results/summary.csv` are kept.
+- The committed meshes are the exact ones behind the reported numbers. PyMeshLab's remeshing is
+  not bit-reproducible across runs, so `make_meshes.py` gives slightly different meshes each time
+  (see *Robustness*).
 
 ## Repository layout
 
 ```
-flattening/            the four methods; each exposes flatten(V, F) -> UV
+flattening/            one module per method; each exposes flatten(V, F) -> UV
   common.py              mesh loading/cleaning, boundary loop, cotan Laplacian, harmonic extension,
-                         closed boundary curve from lengths + turning angles
-  lscm.py  bff.py  arap.py  cetm.py
+                         closed boundary curve, local frames and gradient operators
+  lscm.py bff.py cetm.py arap.py                   the paper's four methods
+  scp.py abf.py slim.py mds.py dem.py floater.py   added by the extension
 evaluation.py          area distortion, exact geodesics, 3D and 2D centers, barycentric back-projection,
-                       CBGD (Eq. 26), spiral path, tool poses (Eqs. 23-24)
+                       CBGD (Eq. 26), spiral path, tool poses (Eqs. 23-24), validity checks
 make_meshes.py         builds meshes/*.obj (procedural shapes + cuts of libigl models, PyMeshLab remeshing)
 run_experiments.py     runs everything, writes results/summary.csv and results/data/*.npz
-make_figures.py        figures (counterparts of the paper's Figs. 1-12) and results/tables.md
-tests/                 correctness tests (theory checks, exact isometry, libigl cross-checks)
+make_figures.py        figures (counterparts of the paper's Figs. 1-12, plus ext_* for all methods)
+                       and results/tables.md
+tests/                 correctness tests (theory checks, exact isometry, cross-checks with libigl,
+                       dense solvers and published numbers)
 meshes/                the eight test meshes
 results/               summary.csv, tables.md, figures/
 ```
@@ -109,6 +188,8 @@ results/               summary.csv, tables.md, figures/
   as unknown; `camelhead.off` is from Sorkine et al. 2004.
 
 ## Methods as implemented
+
+### The paper's four methods
 
 **LSCM** ([flattening/lscm.py](flattening/lscm.py))
 - Minimizes the conformal energy E_C = E_D - A = 1/2 x^T (L (x) I_2 - 2 A_vec) x, which is the
@@ -150,6 +231,94 @@ results/               summary.csv, tables.md, figures/
   harmonically with the cotangent weights of the *new flat metric*. By linear precision this
   reproduces the developed triangles exactly; tests confirm edge lengths and 2 pi angle sums to 1e-8.
 
+### The six added methods
+
+**SCP**, Spectral Conformal Parameterization, Mullen et al. 2008 ([flattening/scp.py](flattening/scp.py))
+- The same conformal energy as LSCM, but instead of pinning two vertices it takes the generalized
+  eigenvector L_C u = lambda B u with the smallest non-trivial lambda (B: ones at boundary vertices).
+  This removes the pin dependence documented for LSCM in the replication.
+- Solved as the paper's Eq. 7 with ARPACK (largest mu of (B - e_b e_b^T / V_b) u = mu M u).
+- One deliberate deviation: the paper uses M = L_C + eps I (eps = 1e-8) as a safeguard. That
+  perturbs the eigenvector (on the animal head the area distortion moves by 0.7 %). M = L_C + eps B
+  is positive definite as well and provably leaves the eigenvectors of Eq. 5 unchanged, so we use it.
+- Verified: L_C u = lambda B u to 1e-7 or better on every mesh; matches a dense solve of the
+  paper's eps I formulation as eps -> 0 (residual proportional to eps, 1e-13 at eps = 1e-13); exact
+  on the developable sheet; lower E_C / (boundary moment) than LSCM.
+
+**ABF++**, Angle Based Flattening, Sheffer et al. 2005 ([flattening/abf.py](flattening/abf.py))
+- Optimizes the 3m corner angles directly: minimize sum (alpha - beta)^2 / beta^2 subject to
+  triangle sums pi, interior vertex sums 2 pi and the wheel (sine) condition that makes edge lengths
+  consistent. beta are the 3D angles scaled to 2 pi around interior vertices.
+- Newton steps without the constraints' second derivatives (sequential linearly constrained
+  programming), with the two ABF++ Schur-complement reductions; target angles, weights and step
+  control follow the authors' implementation in Geogram. We iterate to a KKT residual of 1e-10
+  (4-10 iterations on our meshes) rather than Geogram's loose tolerance.
+- (u, v) from the angles by the angle-based least-squares system ABF++ uses (as Geogram and Blender
+  do); with converged angles it is exact.
+- Verified: the constraints hold to 1e-9 and every final map realizes its optimized angles to
+  1e-9 or better; the ABF energy of the result is lower than that of the angles of every other
+  method's map.
+
+**SLIM**, Scalable Locally Injective Mappings, Rabinovich et al. 2017 ([flattening/slim.py](flattening/slim.py))
+- Minimizes the symmetric Dirichlet energy sum A_t (|J_t|^2 + |J_t^-1|^2), the standard isometric
+  distortion energy, by reweighted local/global proxies with a line search that never degenerates a
+  triangle (locally injective). Blender 4.3's "Minimum Stretch" unwrap is based on SLIM.
+- Mirrors libigl's slim_solve (proximal term, weights, flip-avoiding line search); initialized like
+  our ARAP (harmonic map onto a circle, Tutte's embedding if that flips).
+- Stops when the relative energy decrease falls below 1e-10 (tolerance study below).
+- Verified: matches libigl's slim_solve to ~1e-11 after 1, 5 and 25 iterations; lowest symmetric
+  Dirichlet energy of all methods (each compared at its optimal scale); converges to the exact
+  isometry on the developable sheet.
+
+**MDS**, surface flattening by multidimensional scaling, Zigelman et al. 2002 ([flattening/mds.py](flattening/mds.py))
+- Places the vertices so that planar distances best match geodesic distances (classical MDS),
+  i.e. it targets the quantity CBGD measures.
+- Classical scaling of 128 landmark vertices (geodesic farthest-point sampling, exact MMP
+  geodesics), with the other vertices placed by landmark MDS (de Silva & Tenenbaum 2004). Zigelman
+  et al. likewise flatten a subset of anchor vertices (25 x 25 on their 40,000-vertex surfaces) and
+  interpolate the rest. Reflection fixed so the map preserves orientation.
+- Verified: landmark MDS with every vertex a landmark equals classical MDS to 1e-15; exact on the
+  developable sheet.
+
+**DEM**, density-equalizing map, Choi & Rycroft 2018 ([flattening/dem.py](flattening/dem.py))
+- Area-preserving free-boundary flattening by Gastner-Newman diffusion: population = 3D triangle
+  area; the density population / (2D area) is diffused on the deforming 2D mesh and the vertices
+  move with -grad(rho) / rho until it is uniform.
+- Follows the paper and the authors' MATLAB code (DEM_main): curvature-based convex boundary and
+  Tutte initialization, a "sea" made by reflecting the disk through the unit circle, backward-Euler
+  diffusion with the cotangent Laplacian, stop at std/mean < 1e-3 (at most 49 steps). Only the
+  gap triangulation differs: a Delaunay triangulation with lattice points removed from the boundary
+  edges' diametral circles instead of a constrained Delaunay triangulation.
+- Verified against the paper's Table 5.1 on the authors' own example data (square, hexagon, peaks):
+  median density 1.0120 / 1.0233 / 1.0026 (paper 1.0126 / 1.0227 / 1.0024), IQR 0.071 / 0.055 /
+  0.130 (paper 0.080 / 0.056 / 0.133), 5 / 5 / 3 steps (paper 5 / 5 / 4).
+
+**Floater**, mean value coordinates, Floater 2003 ([flattening/floater.py](flattening/floater.py))
+- Fixed-boundary baseline: boundary on a circle (arc-length spacing), interior vertices as convex
+  combinations of their neighbors with mean value weights. Bijective by Tutte's theorem.
+- Verified: reproduces a planar mesh exactly when its boundary is fixed (linear precision).
+
+### Considered but not included
+- **Beltrami coefficient prolongation** (Fargion & Weber, Eurographics 2026): a newer injective,
+  low-distortion method for disk meshes; its code needs MATLAB, CGAL and PARDISO.
+- **Neural methods.** No published neural flattening method can be used without training network
+  weights. FAM (Zhang et al., NeurIPS 2024), its successor FlexPara, ParaPoint and Nuvo fit a fresh
+  network to every input surface (their official code ships no checkpoints); Neural Jacobian
+  Fields releases weights only for its morphing demo, so UV flattening means training it on a
+  dataset first; and the learned methods built for exactly this setting, learned metric fields
+  (Fargion & Weber 2025) and the Spectral Beltrami Network (Xu & Lui, arXiv 2025), have no public
+  code or weights. This repository deliberately contains no trained weights, so it has no neural
+  method.
+- **CEPS** (Gillespie, Springborn & Crane 2021): the robust successor of CETM, which avoids CETM's
+  failures on bad triangles by intrinsic edge flips. It needs an intrinsic-triangulation data
+  structure, a large addition; our meshes are remeshed so CETM does not fail on them.
+- **SCAF** (Jiang et al. 2017): SLIM's energy plus a scaffold mesh that also prevents global
+  overlaps. SLIM's maps have no boundary overlaps here, the failure SCAF addresses.
+- **Cut-based and multi-chart methods** (OptCuts, PartUV): they cut the surface into several
+  charts, while the paper's pipeline needs one disk-shaped map.
+- **DCP / ASAP**: the natural-boundary discrete conformal map and the as-similar-as-possible map
+  are equivalent to LSCM.
+
 ## Evaluation as implemented ([evaluation.py](evaluation.py))
 
 - **Area distortion.** Per face, log(A3D / A2D), with both domains scaled to unit total area.
@@ -181,18 +350,23 @@ results/               summary.csv, tables.md, figures/
   R_i = [T_i, N_i x T_i, -N_i] has determinant -1 (a reflection), so we use
   [T_i, T_i x N_i, -N_i]. Inverse kinematics (Eq. 25) needs a robot model and is out of scope.
 - **Validity checks.**
-  - The paper checks positive boundary area; we also count flipped or degenerate UV triangles
-    and unmapped via points.
-  - All 32 runs are valid: no flipped or degenerate triangles, positive boundary area, every
-    via point mapped.
-- **Timing.** Median of three runs of the flattening call only (Windows 11, Python 3.11,
-  NumPy 2.2, one machine).
+  - The paper checks positive boundary area; we also count flipped or degenerate UV triangles,
+    crossing pairs of boundary edges and unmapped via points. A map without flipped triangles
+    whose boundary does not cross itself is one-to-one.
+  - All 32 runs of the paper's four methods are valid. Of the 48 runs of the added methods, 5
+    produce invalid maps: MDS on the animal head and DEM on the turtle, face mask, bump cap and
+    animal head. No run leaves via points unmapped.
+  - Every map is continuous on the mesh, so the 2D center and every via point always fall in some
+    triangle, even when a map folds; the measures are therefore defined for invalid maps too.
+- **Timing.** The flattening call only: median of three runs, or a single run for methods that
+  take longer than 60 s (Windows 11, Python 3.11, NumPy 2.2, one laptop).
 
 ## Results
 
 All numbers below are also in [results/summary.csv](results/summary.csv) and
-[results/tables.md](results/tables.md), which add the maximum |delta_i| and the share of path
-steps off by more than 20 %.
+[results/tables.md](results/tables.md), which give every measure for all ten methods.
+
+### The paper's four methods
 
 **Average center-to-boundary geodesic deviation, mean |delta_i| (%)**
 
@@ -226,15 +400,15 @@ steps off by more than 20 %.
 
 | Object | LSCM | BFF | CETM | ARAP |
 |---|---:|---:|---:|---:|
-| Wash basin | 0.101 | 0.068 | 0.211 | 0.589 |
-| Turtle | 0.066 | 0.045 | 0.112 | 1.010 |
-| Face mask | 0.116 | 0.078 | 0.248 | 0.387 |
-| Bump cap | 0.164 | 0.105 | 0.318 | 0.410 |
-| Animal head | 0.380 | 0.258 | 1.250 | 9.220 |
-| Lilium top | 0.013 | 0.011 | 0.025 | 0.097 |
-| Four-sided star | 0.049 | 0.029 | 0.066 | 0.149 |
-| Car body | 0.126 | 0.084 | 0.203 | 0.418 |
-| **Mean +- std** | **0.127 +- 0.105** | **0.085 +- 0.072** | **0.304 +- 0.369** | **1.535 +- 2.917** |
+| Wash basin | 0.122 | 0.088 | 0.213 | 0.624 |
+| Turtle | 0.074 | 0.048 | 0.121 | 1.138 |
+| Face mask | 0.114 | 0.078 | 0.229 | 0.401 |
+| Bump cap | 0.160 | 0.105 | 0.314 | 0.505 |
+| Animal head | 0.405 | 0.286 | 1.410 | 11.467 |
+| Lilium top | 0.014 | 0.013 | 0.026 | 0.083 |
+| Four-sided star | 0.041 | 0.030 | 0.069 | 0.148 |
+| Car body | 0.148 | 0.083 | 0.211 | 0.427 |
+| **Mean +- std** | **0.135 +- 0.113** | **0.092 +- 0.079** | **0.324 +- 0.420** | **1.849 +- 3.648** |
 
 Paper: LSCM 0.067 +- 0.043, ARAP 0.241 +- 0.133, BFF 0.297 +- 0.522, CETM 0.457 +- 0.454 s.
 Our ARAP time is set by its stopping rule. The results are identical (CBGD and area distortion
@@ -276,7 +450,49 @@ scatter are not reliably distinguishable:
 
 ![spacing](results/figures/path_spacing_bump_cap.png)
 
+### All ten methods
+
+The extension figures color only the paper's methods (blue) against the added ones (orange) and
+label every method directly, because ten hues are not reliably distinguishable.
+
+**Average deviation.** Bars are means over the 8 objects, whiskers the standard deviation, gray
+dots the individual objects:
+
+![average, all methods](results/figures/ext_average_deviation.png)
+
+**CBGD per object:**
+
+![CBGD heatmap](results/figures/ext_cbgd_heatmap.png)
+
+**Distortion trade-offs** (method means):
+
+![trade-offs](results/figures/ext_tradeoff.png)
+
+**Area distortion maps** of every method (columns) on every object (rows); + marks the 2D center:
+
+![UV maps](results/figures/ext_uv_grid.png)
+
+Larger per-object versions with CBGD and validity:
+[wash basin](results/figures/ext_object_wash_basin.png) ·
+[turtle](results/figures/ext_object_turtle.png) ·
+[face mask](results/figures/ext_object_face_mask.png) ·
+[bump cap](results/figures/ext_object_bump_cap.png) ·
+[animal head](results/figures/ext_object_animal_head.png) ·
+[lilium top](results/figures/ext_object_lilium_top.png) ·
+[four-sided star](results/figures/ext_object_four_sided_star.png) ·
+[car body](results/figures/ext_object_car_body.png)
+
+**Path spacing on the bump cap:**
+
+![spacing, all methods](results/figures/ext_path_spacing_bump_cap.png)
+
+**Time** per object (log scale):
+
+![timing](results/figures/ext_timing.png)
+
 ## Notes, robustness and caveats
+
+### The replication
 
 - **BFF ≈ CETM.**
   - The paper gives "K̄_i = π" as the CETM target for every boundary vertex. That cannot
@@ -308,12 +524,52 @@ scatter are not reliably distinguishable:
   - This happened on the raw camel head (input angles up to 177 degrees) and on a first face-mask
     cut that kept thin ear fragments (a 161 degree triangle).
   - The paper's remedy, isotropic remeshing, is applied to every mesh here, and the face cut was
-  moved in front of the ears.
+    moved in front of the ears.
 - **ARAP is pure ARAP.** The paper's "unit weighting factor lambda = 1" is ambiguous; it
   otherwise describes ARAP as the lambda -> infinity end of Liu et al.'s family, which is what is
   implemented.
 - **Point location.** The paper accelerates point location with a uniform grid. We test all
   faces directly, which gives the same results more slowly.
+
+### The extension
+
+- **Robustness.** All ten methods were rerun on an independent remeshing of the same inputs
+  (PyMeshLab gives slightly different meshes each time). Mean CBGD moved by at most 0.2
+  points for eight of them (LSCM 9.01 -> 9.19, BFF 4.73 -> 4.89, CETM 4.88 -> 4.89, ARAP 2.87 ->
+  2.88, SCP 8.27 -> 8.27, ABF++ 4.55 -> 4.73, SLIM 4.37 -> 4.37, Floater 5.78 -> 5.78 %), more for
+  MDS (4.65 -> 4.14 %) and DEM (6.71 -> 9.57 %; animal head 24.8 -> 40.6 %, wash basin 1.4 -> 8.5 %).
+  The rankings by area distortion, angle distortion and path step error were the same (up to the
+  tied BFF and CETM); by CBGD, ARAP stayed first while the methods between 4 and 5 % reordered.
+  Differences of a point or less in mean CBGD are therefore not meaningful.
+- **SLIM's stopping rule.** SLIM stops when the relative energy decrease falls below 1e-10. In a
+  separate study run, between 1e-6 and 1e-10 the CBGD of the lilium, bump cap and animal head did
+  not change and area distortion changed by less than 0.001, while the time on the animal head
+  grew about sixfold (30 s at 1e-6, 190 s at 1e-10). On the face mask, CBGD flips to 9.58 % at
+  1e-8 (vertex quantization) and is 10.46 % at 1e-9 and 1e-10. On the developable sheet the distance to the exact isometry shrinks like the
+  square root of the tolerance (4e-4 degrees at 1e-10), so the tests run it at 1e-14.
+- **MDS landmarks.** In a separate study run with 32 / 64 / 128 / 256 landmarks, area distortion
+  converged slowly (bump cap 0.045 / 0.043 / 0.042 / 0.040) while CBGD jumped by vertex
+  quantization (bump cap 13.7 / 12.1 / 12.7 / 12.1 %), and the time grew linearly with the number
+  of landmarks (animal head 50 / 103 / 202 / 411 s); 128 is used.
+  On the animal head every landmark count gives 2,500-2,800 flipped triangles: its geodesic
+  distances are far from those of any planar point set.
+- **DEM fails on the animal head.** Tutte's embedding compresses the ears so much that the initial
+  density spans a factor of 2.3e5. The first diffusion step moves vertices by up to 8 edge
+  lengths and flips 873 triangles; the flow then equalizes the diffused density while the mesh
+  folds (4,669 flipped triangles after the 49 steps the authors' code allows). With 10x smaller
+  steps and 500 steps it still ends with 4,157 flips, so this is a limitation of the 2018 method
+  (the authors' 2024 follow-ups add an overlap correction), not of the step size. The locally
+  authalic start that the authors use for scanned faces lowers the area distortion on every mesh
+  but does not fix the animal head (10,568 flips) and adds flips elsewhere (44 on the bump cap),
+  so the code's default Tutte start is kept. DEM also flips a few triangles on the turtle (4),
+  face mask (19) and bump cap (1).
+- **SCP does not fix what LSCM's pins break.** SCP needs no pins, but on the animal head it is as
+  lopsided as LSCM (CBGD 29.7 %, inside LSCM's range of 21.9-36.6 % over pin choices): both
+  minimize the same conformal energy with only a normalization. With the paper's eps I
+  regularization instead of eps B, the animal head's CBGD is 30.4 % and the car body's 2.1 %
+  instead of 3.4 %, another example of how much vertex quantization amplifies small changes.
+- **ABF++ angle clamps.** The 3-175 degree clamp on the target angles (from the authors' code)
+  only touches 3 angles of the animal head, whose smallest triangle angle is 2.2 degrees.
 
 ## References
 
@@ -323,3 +579,11 @@ scatter are not reliably distinguishable:
 4. B. Springborn, P. Schroeder, U. Pinkall. Conformal Equivalence of Triangle Meshes. ACM TOG 27(3), 2008.
 5. P. Mullen, Y. Tong, P. Alliez, M. Desbrun. Spectral Conformal Parameterization. CGF 27(5), 2008.
 6. J. Mitchell, D. Mount, C. Papadimitriou. The Discrete Geodesic Problem. SIAM J. Comput. 16(4), 1987 (exact geodesics).
+7. A. Sheffer, B. Levy, M. Mogilnitsky, A. Bogomyakov. ABF++: Fast and Robust Angle Based Flattening. ACM TOG 24(2), 2005.
+8. M. Rabinovich, R. Poranne, D. Panozzo, O. Sorkine-Hornung. Scalable Locally Injective Mappings. ACM TOG 36(2), 2017.
+9. G. Zigelman, R. Kimmel, N. Kiryati. Texture Mapping Using Surface Flattening via Multidimensional Scaling. IEEE TVCG 8(2), 2002.
+10. V. de Silva, J. B. Tenenbaum. Sparse Multidimensional Scaling Using Landmark Points. Technical report, Stanford University, 2004.
+11. G. P. T. Choi, C. H. Rycroft. Density-Equalizing Maps for Simply Connected Open Surfaces. SIAM J. Imaging Sciences 11(2), 2018.
+12. M. T. Gastner, M. E. J. Newman. Diffusion-Based Method for Producing Density-Equalizing Maps. PNAS 101(20), 2004.
+13. M. S. Floater. Mean Value Coordinates. Computer Aided Geometric Design 20(1), 2003.
+14. Q. Zhang, J. Hou, W. Wang, Y. He. Flatten Anything: Unsupervised Neural Surface Parameterization. NeurIPS 2024.
