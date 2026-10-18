@@ -809,6 +809,9 @@ per-object rank correlation in each title:
   - All of those points lie within 0.8 stepovers of a crease (bends of 43-103 degrees). More
     than one stepover from a crease, ARAP's stepover error stays below 2.2 %.
   - For a ball-shaped tool this overlap is real.
+- **Thin parts.** On no object is a surface point within one tool radius (in 3D) of a point more
+  than three tool radii away along the mesh. So a pass never reaches across a thin part, such as
+  an ear, to its far side.
 - **The plans themselves.**
   - The spiral plans cover 100 % of every valid 2D map.
   - The raster plans cover 98.5-100 %: where a pass ends at a slanted boundary, slivers between
