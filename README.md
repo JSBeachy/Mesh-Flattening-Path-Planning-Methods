@@ -1,4 +1,4 @@
-# Mesh flattening for 3D path planning: a replication of Mahrukh et al. (Robotics 2025), extended to ten methods
+# Mesh flattening for 3D path planning: a replication of Mahrukh et al. (Robotics 2025), extended to ten methods and coverage paths
 
 This repository re-implements and re-runs the comparison in
 
@@ -16,6 +16,11 @@ distance-preserving (MDS) and an area-preserving (DEM) flattening, and a fixed-b
 (Floater). All ten run on eight open, disk-topology meshes chosen to resemble the paper's objects
 and are evaluated with the paper's measures plus a few extra ones (angle distortion, path spacing,
 validity).
+
+The paper's measures are then critiqued (*Critique of the paper's evaluation*) and complemented
+by **coverage-path tests**: on every map, a spiral and a raster path whose passes run along the
+principal axis of the 2D map are planned with the same stepover, mapped back to the surface and
+measured for 3D coverage and spacing errors.
 
 ## Headline results
 
@@ -118,6 +123,143 @@ Means over the 8 objects (the paper's methods first):
   (27 s and 47 s on average, about 170 s each on the animal head; MDS spends its time on exact
   geodesics from 128 landmarks).
 
+### Coverage paths: does a plan made on the map still cover the surface?
+
+The paper names coverage paths (spiral or raster) as the application, but its one test path is a
+spiral of three turns from the center to the boundary. In this replication those turns are about
+14 % of the map apart, far wider than a coverage stepover, and CBGD checks only where the path's
+start point lands. Here every map also gets two coverage paths with the same stepover, 5 % of the
+square root of the surface area (about 20 passes):
+- a **spiral** built like the replicated one, with enough turns to keep them at most one
+  stepover apart and a closing turn along the boundary;
+- a **raster** (boustrophedon): passes along the principal axis of the 2D map, stepping sideways
+  along the perpendicular axis.
+
+Both are mapped back with Eq. 22 and measured on the surface:
+- **Coverage.** The share of the surface reached by a tool 1.2 stepovers wide, i.e. 20 % planned
+  overlap, the paper's spacing tolerance.
+- **Stepover.** The 3D distance between neighboring raster passes, compared with the plan.
+- **Step.** The 3D spacing of consecutive via points along both paths (in
+  [results/tables.md](results/tables.md)).
+- **Surface within the length tolerance** (path-independent). The same ±20 % tolerance applied to
+  the map itself: the share of the surface on which the map changes no length by more than 20 %.
+
+Means over the 8 objects:
+
+| | Surface within the ±20 % length tolerance | Raster: surface missed | Raster: stepover off by > 20 % (too wide / too narrow) | Spiral: surface missed | Spiral length (x ideal raster) |
+|---|---:|---:|---:|---:|---:|
+| LSCM | 76.0 % | 3.3 % | 21.7 % (8.7 / 13.0) | 2.1 % | 1.71 |
+| BFF | 79.4 % | 2.3 % | 16.8 % (7.2 / 9.6) | 1.1 % | 1.68 |
+| CETM | 79.4 % | 2.3 % | 16.8 % (7.2 / 9.6) | 1.1 % | 1.68 |
+| ARAP | 88.9 % | **0.6 %** | **4.2 %** (0.8 / 3.4) | 0.1 % | 1.64 |
+| SCP | 76.3 % | 3.4 % | 20.0 % (7.7 / 12.3) | 1.9 % | 1.65 |
+| ABF++ | 79.3 % | 2.2 % | 17.2 % (7.2 / 10.0) | 1.3 % | 1.68 |
+| SLIM | **89.6 %** | **0.6 %** | 5.0 % (0.9 / 4.1) | **0.0 %** | 1.65 |
+| MDS | 77.5 % | 2.1 % | 13.4 % (3.1 / 10.3) | 1.6 % | 1.62 |
+| DEM | 44.1 % | 6.0 % | 31.0 % (18.8 / 12.2) | 0.7 % | 1.81 |
+| Floater | 24.5 % | 4.3 % | 38.9 % (14.4 / 24.5) | 3.9 % | **1.19** |
+
+"Surface missed" is 100 % minus the coverage. "Too wide" passes leave gaps; "too narrow" passes
+overlap, so the tool covers that surface twice.
+
+**Findings:**
+- **Maps that preserve lengths keep a coverage plan best.**
+  - ARAP and SLIM change no length by more than 20 % on 89-90 % of the surface. Their raster
+    misses 0.6 % of the surface, about half of which the 2D plan itself leaves at slanted
+    boundary segments. Their stepover stays within 20 % on 95-96 % of the path.
+  - The five conformal methods miss 2.2-3.4 %, with the stepover off on 17-22 % of the path.
+  - The area-preserving DEM and Floater's fixed circle are worst: they miss 6.0 % and 4.3 %, and
+    their stepover is off on 31 % and 39 % of the path.
+- **The errors concentrate on the strongly curved shapes.** On the animal head the raster misses
+  2.3 % (SLIM) to 34.6 % (DEM), and the conformal maps miss 11.6-20.4 %, mostly on the ears and
+  across the forehead (figure below).
+- **CBGD does not show which map keeps a coverage plan.**
+  - All ten methods have CBGD 0 % on the four-sided star, yet Floater's raster misses 5.5 % of it
+    and DEM's 2.3 %.
+  - On the animal head, BFF, CETM and ABF++ (CBGD 5.11 %) miss 11.6 %, almost four times ARAP's
+    3.1 % at nearly the same CBGD (5.26 %). SLIM, sixth by CBGD (17.2 %), misses least.
+  - Per object, CBGD's rank correlation with the raster's missed surface is 0.56 (spiral: 0.33).
+    The path-independent length-tolerance measure reaches 0.69 (spiral: 0.60) and is positive on
+    all 8 objects.
+- **The spiral buys robustness with path length.**
+  - The spiral's turns crowd wherever the boundary is closer to the center than its farthest
+    point. It needs 1.6-1.8 times the path of a raster, and only 1.19 times on Floater's circle.
+  - That built-in overlap hides most distortion: the spiral misses 0-3.9 % of the surface, the
+    raster 0.6-6.0 %.
+  - The raster exposes the map's errors directly, because each of its passes is one stepover from
+    the next.
+- **Coverage alone hides waste.** Passes that end up too close together still cover. Floater's
+  raster covers 99.9 % of the wash basin although 38 % of its stepovers are more than 20 % too
+  narrow, surface that a painting robot would coat twice. Coverage and stepover errors have to be
+  read together.
+
+## Critique of the paper's evaluation
+
+The paper judges a map by its CBGD and its area distortion, and reports timing and a validity
+check. Measured against what a coverage path needs, each of these has a gap. The numbers below
+come from this replication.
+
+1. **CBGD tests a single point.**
+   - It compares where the 2D pole of inaccessibility lands on the surface with the 3D geodesic
+     center. How the map distorts the rest of the surface never enters.
+   - All ten methods score 0 % on the four-sided star, including Floater. Floater's map changes
+     some length by more than 20 % on 79 % of the star's surface, and its raster path misses
+     5.5 % of it.
+2. **CBGD is quantized and noisy.**
+   - Both centers are vertices. A mismatch smaller than an edge reads as exactly 0, and a shift of
+     one or two vertices as 2-3 %.
+   - On 3 of the 8 objects (turtle, lilium, star), all four of the paper's methods score 0 %, so
+     those objects cannot rank them.
+   - Remeshing the same input moves single entries by up to 1.5 points. On the elongated wash
+     basin and car body, the true center itself sits on an almost flat ridge.
+3. **The ranking rests on one or two objects.**
+   - ARAP's lead over BFF comes from the bump cap alone (0.00 vs 15.98 %). Without it, BFF
+     averages 3.12 % and ARAP 3.29 %.
+   - LSCM's last place comes mostly from the animal head (36.6 %). Without it, LSCM averages
+     5.07 % and BFF 4.68 %.
+   - For each of the paper's four methods, the standard deviation of CBGD over the objects is
+     larger than the mean (e.g. ARAP 2.87 +- 3.51 %), and the paper gives no uncertainty or
+     sensitivity analysis. Choosing LSCM's two pinned vertices differently alone moves its
+     animal-head CBGD between 21.9 and 36.6 %.
+4. **The spacing claim is never measured.**
+   - The paper motivates CBGD by pass spacing: "deviations beyond roughly 15–20% of the nominal
+     step cause overlap or under-coverage between adjacent passes". It calls CBGD "directly
+     related to spacing preservation and coverage uniformity" but measures neither.
+   - It also leaves "nominal" undefined. A free-boundary map has no fixed scale, so a 2D step
+     only becomes a 3D step through a chosen scale (here the area-equivalent one).
+   - Measured here, CBGD ranks the maps' coverage errors only moderately. Its median rank
+     correlation per object is 0.56 with the raster's missed surface, 0.42 with its stepover
+     error and 0.33 with the spiral's missed surface.
+5. **The test path cannot show coverage errors.**
+   - With three turns from the center to the boundary, the turns are far apart (about 14 % of the
+     map in this replication), and no tool width is given. Overlap or gaps between passes are
+     therefore never evaluated. Raster paths are named but not tested.
+   - The tolerance the paper quotes concerns the distance *between* neighboring passes (the
+     stepover), not the step between via points along one pass. A map can distort the two very
+     differently: the stretched test map in tests/test_evaluation.py widens stepovers by 41 %
+     while shortening steps by 29 %.
+6. **Area distortion is blind to shear.**
+   - log(A3D/A2D) measures only the product of the map's two principal stretches. An
+     area-preserving map can still stretch one direction and compress the other.
+   - On four objects, DEM has the least area distortion of all ten methods but 2-3 times SLIM's
+     raster stepover error: wash basin 9.4 vs 4.0 %, face mask 17.6 vs 8.7 %, lilium 9.0 vs
+     4.0 %, car body 11.4 vs 3.8 %.
+   - Spacing depends on each stretch separately. Holding both within the tolerance (the
+     length-tolerance measure) predicts the coverage errors better: median rank correlation 0.69
+     against 0.50 for area distortion, for the raster's missed surface.
+7. **The validity check accepts folded maps.** The paper checks that the boundary encloses a
+   positive area (and a "ratio of non-zero UV magnitudes"). All 80 maps here pass the area check,
+   including MDS's and DEM's animal-head maps with 2,568 and 4,669 flipped triangles.
+8. **Timing lacks the solver settings.**
+   - Times are reported without tolerances or iteration counts. Our ARAP time on the animal head
+     varies about eightfold over stopping tolerances that give identical results.
+   - The paper's times also do not grow with mesh size: its 15,082-face Bumpcap is faster than
+     its 1,844-face Lilium for all four methods (Table 2).
+
+The coverage-path tests address points 1 and 4-6. The robustness runs below address points 2
+and 3, the flipped-triangle and boundary-crossing counts address point 7, and the stated
+stopping rules address point 8.
+
 ## Quick start
 
 ```bash
@@ -126,8 +268,9 @@ python -m venv .venv
 pip install -r requirements.txt
 
 python run_experiments.py   # flatten + evaluate 8 meshes x 10 methods (~25 min)
+python run_coverage.py      # coverage paths on every map (~2.5 min)
 python make_figures.py      # figures in results/figures, tables in results/tables.md
-python -m pytest            # 49 correctness tests (~10 s)
+python -m pytest            # 56 correctness tests (~12 s)
 python make_meshes.py       # optional: rebuild meshes/ from scratch (~1.5 min, needs internet)
 ```
 
@@ -146,15 +289,17 @@ flattening/            one module per method; each exposes flatten(V, F) -> UV
   lscm.py bff.py cetm.py arap.py                   the paper's four methods
   scp.py abf.py slim.py mds.py dem.py floater.py   added by the extension
 evaluation.py          area distortion, exact geodesics, 3D and 2D centers, barycentric back-projection,
-                       CBGD (Eq. 26), spiral path, tool poses (Eqs. 23-24), validity checks
+                       CBGD (Eq. 26), spiral path, tool poses (Eqs. 23-24), validity checks,
+                       coverage paths (spiral, raster) and their coverage and spacing measures
 make_meshes.py         builds meshes/*.obj (procedural shapes + cuts of libigl models, PyMeshLab remeshing)
-run_experiments.py     runs everything, writes results/summary.csv and results/data/*.npz
+run_experiments.py     flattens and evaluates everything, writes results/summary.csv and results/data/*.npz
+run_coverage.py        plans and measures the coverage paths on the saved maps, writes results/coverage.csv
 make_figures.py        figures (counterparts of the paper's Figs. 1-12, plus ext_* for all methods)
                        and results/tables.md
 tests/                 correctness tests (theory checks, exact isometry, cross-checks with libigl,
                        dense solvers and published numbers)
 meshes/                the eight test meshes
-results/               summary.csv, tables.md, figures/
+results/               summary.csv, coverage.csv, tables.md, figures/
 ```
 
 ## Test meshes
@@ -361,6 +506,47 @@ results/               summary.csv, tables.md, figures/
 - **Timing.** The flattening call only: median of three runs, or a single run for methods that
   take longer than 60 s (Windows 11, Python 3.11, NumPy 2.2, one laptop).
 
+### Coverage paths ([run_coverage.py](run_coverage.py))
+
+- **Scale.** Each map is in its unit box. The area-equivalent scale k = sqrt(A3D / A2D) turns 2D
+  lengths into nominal 3D lengths, as for the path spacing above.
+- **Stepover and tool.**
+  - The surface stepover is 5 % of sqrt(A3D), the same for every map of an object; in 2D that is
+    5 % of sqrt(A2D).
+  - The tool covers a band 1.2 stepovers wide, so neighboring passes overlap by 20 %, the upper
+    end of the paper's 15-20 % tolerance.
+  - Distances to the path are straight-line distances in 3D, i.e. a ball-shaped tool footprint.
+- **Raster.**
+  - The passes run along the major principal axis of the 2D map. The axis comes from the second
+    moments of the map's triangles, so it does not depend on how the vertices are spread.
+  - The lines are one stepover apart, centered on the map's extent across that axis, and
+    clipped to the UV boundary. Every other line runs backwards, and a line that crosses a
+    concave part of the boundary gives several passes.
+  - The short moves between passes are not evaluated.
+- **Spiral.** The replicated spiral's construction, with enough turns that consecutive turns are
+  at most one stepover apart in every direction, plus a closing turn along the boundary.
+- **Back-projection.** Each path is sampled every tenth of a stepover and mapped with Eq. 22.
+  Via points are every half stepover.
+- **Measures.**
+  - *Coverage*: the share of the surface area within the tool radius of the 3D path. Each face is
+    sampled at the centroids of a regular subdivision, at most about 1/8 of the tool radius
+    apart. *Planned coverage* is the same in the 2D plan.
+  - *Stepover error* (raster only): from each path point, the 3D distance to the next line,
+    relative to k times its 2D distance. Pairs whose next line is more than 1.5 stepovers away in
+    2D (where a shorter pass ends) are skipped.
+  - *Step error*: the same along the path, between consecutive via points of a pass.
+  - *Relative path length*: the 3D path length over that of an ideal raster, A3D / (k x stepover).
+  - *Surface within the length tolerance*: per face, the map's two principal stretches (singular
+    values of its Jacobian) relative to k must both be within ±20 %. Flipped faces never count.
+- **Why the spiral has no stepover error.**
+  - Its turns are at most one stepover apart, and closer wherever the boundary is nearer the
+    center than its farthest point.
+  - On eight of the ten maps of the four-sided star, the next turn is less than half a stepover
+    away at more than 99 % of the spiral's points. Only DEM's and Floater's convex boundaries keep
+    the turns evenly spaced.
+  - So the spiral has no fixed 2D spacing to compare against, and its coverage shows the effect
+    of distortion instead.
+
 ## Results
 
 All numbers below are also in [results/summary.csv](results/summary.csv) and
@@ -490,6 +676,31 @@ Larger per-object versions with CBGD and validity:
 
 ![timing](results/figures/ext_timing.png)
 
+### Coverage paths
+
+All coverage values per object are in [results/coverage.csv](results/coverage.csv) and
+[results/tables.md](results/tables.md).
+
+**The same paths on two maps with CBGD 0 %.** The raster plans are colored by the stepover
+measured on the surface; red patches on the surface are what a tool 1.2 stepovers wide misses.
+ARAP's map of the four-sided star is nearly isometric; Floater's circle squeezes the star's
+points.
+
+![coverage example](results/figures/ext_coverage_four_sided_star.png)
+
+**All methods** (lower is better in every panel):
+
+![coverage summary](results/figures/ext_coverage_summary.png)
+
+**Where the tool misses the animal head**, the hardest object, for every method:
+
+![missed surface, animal head](results/figures/ext_coverage_missed_animal_head.png)
+
+**Which per-map measure predicts the missed surface?** One point per object and method, with the
+per-object rank correlation in each title:
+
+![predictors](results/figures/ext_coverage_predictors.png)
+
 ## Notes, robustness and caveats
 
 ### The replication
@@ -528,8 +739,9 @@ Larger per-object versions with CBGD and validity:
 - **ARAP is pure ARAP.** The paper's "unit weighting factor lambda = 1" is ambiguous; it
   otherwise describes ARAP as the lambda -> infinity end of Liu et al.'s family, which is what is
   implemented.
-- **Point location.** The paper accelerates point location with a uniform grid. We test all
-  faces directly, which gives the same results more slowly.
+- **Point location.** The paper accelerates point location with a uniform grid. We find the
+  candidate triangles with a k-d tree over the triangle centroids instead. The result is
+  identical to testing every triangle: checked on all 80 maps, and in the tests on a folded map.
 
 ### The extension
 
@@ -570,6 +782,39 @@ Larger per-object versions with CBGD and validity:
   instead of 3.4 %, another example of how much vertex quantization amplifies small changes.
 - **ABF++ angle clamps.** The 3-175 degree clamp on the target angles (from the authors' code)
   only touches 3 angles of the animal head, whose smallest triangle angle is 2.2 degrees.
+
+### The coverage paths
+
+- **Sensitivity.** Separate study runs changed one setting at a time: stepover 2.5 % or 10 %
+  instead of 5 %, tool width 1.0 or 1.5 stepovers instead of 1.2, raster passes along the minor
+  instead of the major axis.
+  - The method means (missed surface of both paths, raster stepover errors) rank-correlate
+    0.90-1.00 with the reported ones.
+  - ARAP and SLIM always have the least raster missed surface, and DEM or Floater the most.
+  - With no planned overlap (tool width 1.0), the raster misses 2.9 % (ARAP) to 12.3 % (DEM);
+    with 50 % overlap, 0.1-3.5 %.
+- **The tolerance should match the planned overlap.**
+  - The length-tolerance measure predicts the raster's missed surface better than CBGD in every
+    run but one: median rank correlation 0.58-0.77, against 0.34-0.60 for CBGD.
+  - The exception is the ±20 % tolerance against a 50 % overlap (0.48 vs 0.56). With the
+    matching ±50 % tolerance it is 0.69 again.
+- **Pass direction matters only for non-conformal maps.** Along the minor axis, the conformal
+  methods' results barely change, because a conformal map scales every direction alike. DEM's
+  raster misses 3.4 % instead of 6.0 %, and MDS's stepover is off on 4.8 % instead of 13.4 % of
+  the path.
+- **Creases.** Distances are straight-line distances, so across a sharp crease they are shorter
+  than along the surface.
+  - On the four-sided star, this flags 4 % of ARAP's raster path as too narrow, although ARAP
+    keeps every length within the tolerance there.
+  - All of those points lie within 0.8 stepovers of a crease (bends of 43-103 degrees). More
+    than one stepover from a crease, ARAP's stepover error stays below 2.2 %.
+  - For a ball-shaped tool this overlap is real.
+- **The plans themselves.**
+  - The spiral plans cover 100 % of every valid 2D map.
+  - The raster plans cover 98.5-100 %: where a pass ends at a slanted boundary, slivers between
+    the pass ends stay uncovered.
+  - The folded MDS and DEM animal-head maps cover less already in 2D (raster 96.6 and 92.5 %).
+  - No path point fell outside its UV mesh.
 
 ## References
 
