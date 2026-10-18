@@ -1,9 +1,10 @@
 """Figures and tables from the saved results.
 
 Counterparts of the paper's Figs. 1-12 and Table 2 for its four methods, and
-extension figures (prefix ext_) comparing all ten methods.
+extension figures (prefix ext_) comparing all ten methods, including the
+coverage paths (prefix ext_coverage_).
 
-Usage:  python make_figures.py      (after run_experiments.py)
+Usage:  python make_figures.py      (after run_experiments.py and run_coverage.py)
 """
 import csv
 import os
@@ -14,7 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.collections import LineCollection, PolyCollection  # noqa: E402
-from matplotlib.colors import LinearSegmentedColormap, Normalize, PowerNorm  # noqa: E402
+from matplotlib.colors import LinearSegmentedColormap, Normalize, PowerNorm, to_rgb  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 from matplotlib.ticker import FuncFormatter  # noqa: E402
@@ -41,6 +42,7 @@ INK, INK_2, MUTED, GRID, AXIS, SURFACE = "#0b0b0b", "#52514e", "#898781", "#e1e0
 # Diverging blue <-> red with a neutral gray midpoint (for signed log ratios and deviations).
 DIVERGING = LinearSegmentedColormap.from_list(
     "blue_gray_red", ["#104281", "#2a78d6", "#9ec5f4", "#f0efec", "#f4b0ae", "#e34948", "#931f1f"])
+CRITICAL = "#d03b3b"  # status color for surface the tool misses (always labeled in text)
 
 # Display orientation: (elevation, azimuth) in degrees; the two scans are y-up and are turned z-up.
 VIEWS = {"wash_basin": (40, -60), "turtle": (50, -100), "face_mask": (10, -75), "bump_cap": (25, -40),
@@ -71,8 +73,8 @@ def per_object(rows, field, methods=None):
                          for _, name, _ in OBJECTS]) for m in (METHODS if methods is None else methods)}
 
 
-def read_summary():
-    with open(os.path.join(RESULTS, "summary.csv")) as f:
+def read_summary(name="summary.csv"):
+    with open(os.path.join(RESULTS, name)) as f:
         return list(csv.DictReader(f))
 
 
@@ -90,8 +92,9 @@ def display_coords(key, V):
     return V[:, [0, 2, 1]] * np.array([1, -1, 1]) if key in Y_UP else V
 
 
-def render_mesh(ax, key, V, F, edges=False):
-    """Orthographic, Lambert-shaded rendering with the painter's algorithm; returns the projector."""
+def render_mesh(ax, key, V, F, edges=False, highlight=None):
+    """Orthographic, Lambert-shaded rendering with the painter's algorithm; returns the projector.
+    `highlight` (per face, 0 to 1) tints faces toward CRITICAL."""
     right, up, toward = view_frame(key)
     W = display_coords(key, V)
     n = np.cross(W[F[:, 1]] - W[F[:, 0]], W[F[:, 2]] - W[F[:, 0]])
@@ -99,6 +102,9 @@ def render_mesh(ax, key, V, F, edges=False):
     light = toward + 0.6 * up
     shade = 0.35 + 0.65 * np.abs(n @ (light / np.linalg.norm(light)))
     rgb = np.repeat(shade[:, None] * 0.93, 3, axis=1)
+    if highlight is not None:
+        w = highlight[:, None]
+        rgb = (1 - w) * rgb + w * (0.55 + 0.45 * shade[:, None]) * np.array(to_rgb(CRITICAL))
     order = np.argsort((W @ toward)[F].mean(axis=1))
 
     def project(X):
@@ -523,14 +529,170 @@ def figure_ext_timing(rows):
 
 
 # ----------------------------------------------------------------------------------------
+# Coverage path figures (all ten methods)
+# ----------------------------------------------------------------------------------------
+def load_coverage(key, method):
+    return dict(np.load(os.path.join(DATA, f"{key}__{method}__coverage.npz")))
+
+
+def missed(cov_rows, path):
+    """{method: share of the surface the tool misses (%) over the objects}."""
+    return {m: 100 - v for m, v in per_object(cov_rows, f"{path}_coverage_pct").items()}
+
+
+def outside_tolerance(cov_rows):
+    return {m: 100 - v for m, v in per_object(cov_rows, "within_tolerance_pct").items()}
+
+
+def draw_passes(ax, points, pass_id, colors=INK, linewidth=0.8):
+    """A path as segments between consecutive points of the same pass; `colors` is one color or one per point."""
+    keep = (pass_id[1:] == pass_id[:-1]) & np.isfinite(points[1:, 0]) & np.isfinite(points[:-1, 0])
+    segments = np.stack([points[:-1], points[1:]], axis=1)[keep]
+    if not isinstance(colors, str):
+        colors = np.asarray(colors)[:-1][keep]
+    ax.add_collection(LineCollection(segments, colors=colors, linewidths=linewidth))
+
+
+def figure_coverage_example(key, name, methods, rows, cov_rows):
+    """Raster and spiral coverage paths planned in 2D and mapped onto the surface, for a few methods."""
+    mesh = dict(np.load(os.path.join(DATA, f"{key}__mesh.npz")))
+    V, F, b = mesh["V"], mesh["F"], mesh["boundary"]
+    norm = Normalize(-50, 50)
+    fig, axes = plt.subplots(len(methods), 4, figsize=(17, 4.4 * len(methods)))
+    fig.subplots_adjust(left=0.01, right=0.99, top=0.9, bottom=0.13, wspace=0.08, hspace=0.3)
+    for i, m in enumerate(methods):
+        uv = np.load(os.path.join(DATA, f"{key}__{m}.npz"))["uv"]
+        c = load_coverage(key, m)
+        cov = next(x for x in cov_rows if x["object"] == name and x["method"] == m)
+        cbgd = next(float(x["cbgd_mean_pct"]) for x in rows if x["object"] == name and x["method"] == m)
+        for j, path in enumerate(["raster", "spiral"]):
+            ax2, ax3 = axes[i, 2 * j], axes[i, 2 * j + 1]
+            ax2.add_collection(PolyCollection(uv[F], facecolors="#f0efec", edgecolors="none"))
+            ax2.plot(*uv[np.r_[b, b[:1]]].T, color=INK_2, linewidth=1)
+            points, pass_id = c[f"{path}_points_2d"], c[f"{path}_pass_id"]
+            if path == "raster":  # colored by the stepover error measured on the surface, on a dark casing
+                over = c["raster_stepover"]
+                colors = np.where(np.isfinite(over)[:, None], DIVERGING(norm(100 * np.nan_to_num(over)))[:, :3],
+                                  to_rgb(MUTED))
+                draw_passes(ax2, points, pass_id, INK, 2.6)
+                draw_passes(ax2, points, pass_id, colors, 1.5)
+                ax2.set_title(f"{m} (CBGD {cbgd:.2f} %)\nraster plan, passes along the principal axis",
+                              fontsize=10)
+            else:
+                draw_passes(ax2, points, pass_id, INK, 0.6)
+                ax2.set_title(f"{m}: spiral plan\n(path {float(cov['spiral_relative_length']):.2f} x the length "
+                              f"of an ideal raster)", fontsize=10)
+            ax2.set_aspect("equal")
+            ax2.set_xlim(-0.03, 1.03)
+            ax2.set_ylim(-0.03, 1.03)
+            ax2.axis("off")
+            project = render_mesh(ax3, key, V, F, highlight=c[f"{path}_uncovered"])
+            draw_passes(ax3, project(c[f"{path}_points_3d"]), pass_id, INK, 0.5)
+            text = f"On the surface: {float(cov[f'{path}_coverage_pct']):.1f} % covered"
+            if path == "raster":
+                wide, narrow = float(cov["raster_stepover_wide_pct"]), float(cov["raster_stepover_narrow_pct"])
+                text += f"\nstepover off by > 20 % on {wide + narrow:.0f} % of the path\n" \
+                        f"({wide:.0f} % too wide, {narrow:.0f} % too narrow)"
+            ax3.set_title(text, fontsize=10)
+    cax = fig.add_axes([0.12, 0.06, 0.5, 0.018])
+    cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=DIVERGING), cax=cax, orientation="horizontal")
+    cb.set_label("Raster plan colored by its stepover on the surface vs. the plan (%): blue = passes too close, "
+                 "red = too far apart,\ngray = not measured (last line, pass ends)")
+    cb.outline.set_visible(False)
+    fig.legend(handles=[Patch(color=CRITICAL, label="surface the tool misses (tool width 1.2 stepovers)")],
+               loc="center left", bbox_to_anchor=(0.66, 0.065), fontsize=9)
+    fig.suptitle(f"{name}: the same coverage paths planned on two maps and mapped back to the surface",
+                 fontsize=12, color=INK)
+    fig.savefig(os.path.join(FIGURES, f"ext_coverage_{key}.png"), dpi=100, bbox_inches="tight")
+    plt.close(fig)
+
+
+def figure_coverage_object(key, name, cov_rows):
+    """One object, all methods: surface the raster and the spiral miss."""
+    mesh = dict(np.load(os.path.join(DATA, f"{key}__mesh.npz")))
+    fig, axes = plt.subplots(2, len(METHODS), figsize=(1.75 * len(METHODS), 4.6))
+    for j, m in enumerate(METHODS):
+        c = load_coverage(key, m)
+        cov = next(x for x in cov_rows if x["object"] == name and x["method"] == m)
+        for i, path in enumerate(["raster", "spiral"]):
+            render_mesh(axes[i, j], key, mesh["V"], mesh["F"], highlight=c[f"{path}_uncovered"])
+            axes[i, j].set_title(f"{m}\n{path}: {float(cov[f'{path}_coverage_pct']):.1f} % covered", fontsize=9)
+    fig.suptitle(f"{name}: surface covered by the raster (top) and the spiral (bottom), tool width "
+                 f"1.2 stepovers", fontsize=11, color=INK)
+    fig.tight_layout()
+    fig.legend(handles=[Patch(color=CRITICAL, label="surface the tool misses")], loc="upper right",
+               bbox_to_anchor=(1.0, 1.0), fontsize=9)
+    fig.savefig(os.path.join(FIGURES, f"ext_coverage_missed_{key}.png"), dpi=100, bbox_inches="tight")
+    plt.close(fig)
+
+
+def figure_coverage_summary(cov_rows):
+    """All methods: surface outside the length tolerance, raster stepover errors, surface the paths miss."""
+    wide, narrow = (per_object(cov_rows, f"raster_stepover_{x}_pct") for x in ("wide", "narrow"))
+    panels = [(outside_tolerance(cov_rows), "Surface where the map changes some\nlength by more than 20 % (%)"),
+              ({m: wide[m] + narrow[m] for m in METHODS}, "Raster: path with the stepover off\nby more than 20 % (%)"),
+              (missed(cov_rows, "raster"), "Raster: surface the tool misses (%)"),
+              (missed(cov_rows, "spiral"), "Spiral: surface the tool misses (%)")]
+    order = sorted(METHODS, key=lambda m: -panels[0][0][m].mean())  # best at the top
+    fig, axes = plt.subplots(1, 4, figsize=(17, 5.4), sharey=True)
+    for ax, (v, title) in zip(axes, panels):
+        for k, m in enumerate(order):
+            mean = v[m].mean()
+            ax.barh(k, mean, height=0.42, color=GROUP_COLORS[GROUP[m]], zorder=2)
+            ax.scatter(v[m], np.full(len(v[m]), k + 0.34), s=12, color=MUTED, edgecolors="none", zorder=3)
+            ax.annotate(f"{mean:.1f}", (mean, k), xytext=(4, -3), textcoords="offset points", fontsize=8, color=INK)
+        ax.set_title(title, fontsize=10)
+        ax.set_xlim(0, max(np.max(x) for x in v.values()) * 1.08)
+        ax.grid(axis="y", visible=False)
+    axes[0].set_yticks(range(len(order)), order)
+    group_legend(axes[3], loc="lower right")
+    fig.suptitle("Coverage paths on the maps of all ten methods (bar: mean over the 8 objects, gray dots: objects; "
+                 "lower is better)", fontsize=11, color=INK)
+    fig.tight_layout()
+    fig.savefig(os.path.join(FIGURES, "ext_coverage_summary.png"), dpi=110)
+    plt.close(fig)
+
+
+def figure_coverage_predictors(rows, cov_rows):
+    """How well each per-map measure predicts the surface the raster misses (one point per object and method)."""
+    y = missed(cov_rows, "raster")
+    panels = [(per_object(rows, "cbgd_mean_pct"), "CBGD (%), the paper's measure"),
+              (per_object(rows, "mean_abs_log_area"), "Mean area distortion |log(A3D/A2D)|, the paper's measure"),
+              (outside_tolerance(cov_rows), "Surface where some length changes by more than 20 % (%)")]
+    names = [name for _, name, _ in OBJECTS]
+    notable = [("Four-sided star", "Floater"), ("Animal head", "SLIM"), ("Animal head", "MDS")]
+    colors = [GROUP_COLORS[GROUP[m]] for m in METHODS for _ in OBJECTS]
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5), sharey=True)
+    for ax, (x, label) in zip(axes, panels):
+        ax.scatter(np.concatenate([x[m] for m in METHODS]), np.concatenate([y[m] for m in METHODS]), s=24,
+                   c=colors, edgecolors=SURFACE, linewidths=0.8, zorder=3)
+        for obj, m in notable:
+            i = names.index(obj)
+            ax.annotate(f"{obj}, {m}", (x[m][i], y[m][i]), xytext=(6, 4), textcoords="offset points", fontsize=8,
+                        color=INK_2)
+        rho = object_rhos(x, y)
+        ax.set_title(f"Rank correlation with the missed surface, per object:\nmedian {np.median(rho):.2f} "
+                     f"(positive on {np.sum(rho > 0)} of {len(rho)} objects)", fontsize=10)
+        ax.set_xlabel(label)
+    axes[0].set_yscale("function", functions=(np.sqrt, np.square))
+    axes[0].set_yticks([0, 1, 2, 5, 10, 20, 30])
+    axes[0].yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    axes[0].set_ylabel("Raster: surface the tool misses (%, square-root scale)")
+    group_legend(axes[2], loc="upper left")
+    fig.tight_layout()
+    fig.savefig(os.path.join(FIGURES, "ext_coverage_predictors.png"), dpi=110)
+    plt.close(fig)
+
+
+# ----------------------------------------------------------------------------------------
 # Tables
 # ----------------------------------------------------------------------------------------
-def tables(rows):
-    """Markdown tables (Table 2 counterpart and the per-object metrics) in results/tables.md."""
+def tables(rows, cov_rows):
+    """Markdown tables (Table 2 counterpart, the per-object metrics, coverage paths) in results/tables.md."""
     objects = [name for _, name, _ in OBJECTS]
     COUNTS = {"flipped_faces", "boundary_self_intersections", "spiral_unmapped"}
 
-    def grid(field, fmt):
+    def grid(field, fmt, rows=rows):
         lines = ["| Object | " + " | ".join(METHODS) + " |", "|---|" + "---:|" * len(METHODS)]
         for obj in objects:
             vals = [next(float(r[field]) for r in rows if r["object"] == obj and r["method"] == m) for m in METHODS]
@@ -557,24 +719,57 @@ def tables(rows):
         ("Validity: crossing pairs of boundary edges (global overlaps)", "boundary_self_intersections", "{:.0f}"),
         ("Validity: spiral via points outside the UV mesh", "spiral_unmapped", "{:.0f}"),
     ]
-    text = ("# Results tables\n\nGenerated by `make_figures.py` from `summary.csv`. LSCM, BFF, CETM and ARAP are "
-            "the paper's methods; the other six were added by the extension.\n")
+    coverage_sections = [
+        ("Coverage paths: share of the surface where the map keeps every length within +-20 % of nominal (%)",
+         "within_tolerance_pct", "{:.1f}"),
+        ("Raster path: surface covered by the tool (%)", "raster_coverage_pct", "{:.1f}"),
+        ("Spiral path: surface covered by the tool (%)", "spiral_coverage_pct", "{:.1f}"),
+        ("Raster path: planned coverage in 2D (%)", "raster_planned_coverage_pct", "{:.1f}"),
+        ("Spiral path: planned coverage in 2D (%)", "spiral_planned_coverage_pct", "{:.1f}"),
+        ("Raster path: mean |stepover error| (%)", "raster_stepover_mean_abs_dev_pct", "{:.1f}"),
+        ("Raster path: share of the path with the stepover more than 20 % too wide (%)",
+         "raster_stepover_wide_pct", "{:.1f}"),
+        ("Raster path: share of the path with the stepover more than 20 % too narrow (%)",
+         "raster_stepover_narrow_pct", "{:.1f}"),
+        ("Raster path: mean |step error| along the passes (%)", "raster_step_mean_abs_dev_pct", "{:.1f}"),
+        ("Spiral path: mean |step error| along the path (%)", "spiral_step_mean_abs_dev_pct", "{:.1f}"),
+        ("Raster path: length relative to an ideal raster", "raster_relative_length", "{:.2f}"),
+        ("Spiral path: length relative to an ideal raster", "spiral_relative_length", "{:.2f}"),
+    ]
+    text = ("# Results tables\n\nGenerated by `make_figures.py` from `summary.csv` and `coverage.csv`. LSCM, BFF, "
+            "CETM and ARAP are the paper's methods; the other six were added by the extension.\n")
     for title, field, fmt in sections:
         text += f"\n## {title}\n\n{grid(field, fmt)}\n"
     text += f"\n## Does distortion predict the geodesic deviation?\n\n{correlations(rows)}\n"
-    text += f"\n## Objects on which each method is best (ties count for every tied method)\n\n{wins(rows)}\n"
+    for title, field, fmt in coverage_sections:
+        text += f"\n## {title}\n\n{grid(field, fmt, cov_rows)}\n"
+    text += f"\n## Which measure predicts the coverage paths' errors?\n\n{coverage_correlations(rows, cov_rows)}\n"
+    text += ("\n## Objects on which each method is best (ties within 0.005, or 0.05 for coverage, count for every "
+             f"tied method)\n\n{wins(rows, cov_rows)}\n")
     with open(os.path.join(RESULTS, "tables.md"), "w") as f:
         f.write(text)
 
 
-def wins(rows):
-    """Per method: objects with the lowest CBGD and the lowest path step error (ties to 0.01 count for all)."""
+def wins(rows, cov_rows):
+    """Per method: objects on which it has the lowest CBGD, path step error and missed surface."""
     lines = ["| Measure | " + " | ".join(METHODS) + " |", "|---|" + "---:|" * len(METHODS)]
-    for title, field in [("Lowest CBGD", "cbgd_mean_pct"), ("Lowest path step error", "spacing_mean_abs_dev_pct")]:
-        v = per_object(rows, field)
+    for title, v, tie in [("Lowest CBGD", per_object(rows, "cbgd_mean_pct"), 0.005),
+                          ("Lowest path step error", per_object(rows, "spacing_mean_abs_dev_pct"), 0.005),
+                          ("Highest raster coverage", missed(cov_rows, "raster"), 0.05),
+                          ("Highest spiral coverage", missed(cov_rows, "spiral"), 0.05)]:
         best = np.min(np.array([v[m] for m in METHODS]), axis=0)
-        lines.append(f"| {title} | " + " | ".join(str(int(np.sum(v[m] <= best + 0.005))) for m in METHODS) + " |")
+        lines.append(f"| {title} | " + " | ".join(str(int(np.sum(v[m] <= best + tie))) for m in METHODS) + " |")
     return "\n".join(lines)
+
+
+def object_rhos(x, y):
+    """Spearman rank correlation of two measures across the methods, for each object on which neither is constant."""
+    rho = []
+    for i in range(len(OBJECTS)):
+        a, b = (np.array([v[m][i] for m in METHODS]) for v in (x, y))
+        if np.ptp(a) > 0 and np.ptp(b) > 0:
+            rho.append(spearmanr(a, b)[0])
+    return np.array(rho)
 
 
 def correlations(rows):
@@ -583,22 +778,38 @@ def correlations(rows):
     lines = ["| Measure | median rho over objects | objects with rho > 0 |", "|---|---:|---:|"]
     for title, field in [("Area distortion", "mean_abs_log_area"), ("Angle distortion", "mean_abs_angle_deg"),
                          ("Path step error", "spacing_mean_abs_dev_pct")]:
-        x = per_object(rows, field)
-        rho = []
-        for i in range(len(OBJECTS)):
-            a = np.array([x[m][i] for m in METHODS])
-            b = np.array([cbgd[m][i] for m in METHODS])
-            if np.ptp(b) > 0:  # skip objects on which every method has the same CBGD
-                rho.append(spearmanr(a, b)[0])
-        lines.append(f"| {title} | {np.median(rho):.2f} | {np.sum(np.array(rho) > 0)} of {len(rho)} |")
+        rho = object_rhos(per_object(rows, field), cbgd)
+        lines.append(f"| {title} | {np.median(rho):.2f} | {np.sum(rho > 0)} of {len(rho)} |")
     return ("For each object, the Spearman rank correlation across all methods between the distortion measure "
             "and CBGD; objects on which all methods have the same CBGD are skipped.\n\n" + "\n".join(lines))
 
 
+def coverage_correlations(rows, cov_rows):
+    """Spearman rank correlation of each per-map measure with the coverage paths' errors, per object."""
+    outcomes = [("Raster: missed surface", missed(cov_rows, "raster")),
+                ("Spiral: missed surface", missed(cov_rows, "spiral")),
+                ("Raster: mean stepover error", per_object(cov_rows, "raster_stepover_mean_abs_dev_pct"))]
+    predictors = [("CBGD (paper)", per_object(rows, "cbgd_mean_pct")),
+                  ("Area distortion (paper)", per_object(rows, "mean_abs_log_area")),
+                  ("Angle distortion", per_object(rows, "mean_abs_angle_deg")),
+                  ("Step error of the paper's spiral", per_object(rows, "spacing_mean_abs_dev_pct")),
+                  ("Surface outside the +-20 % length tolerance", outside_tolerance(cov_rows))]
+    lines = ["| Measure | " + " | ".join(t for t, _ in outcomes) + " |", "|---|" + "---:|" * len(outcomes)]
+    for title, x in predictors:
+        cells = []
+        for _, y in outcomes:
+            rho = object_rhos(x, y)
+            cells.append(f"{np.median(rho):.2f} ({np.sum(rho > 0)} of {len(rho)})")
+        lines.append(f"| {title} | " + " | ".join(cells) + " |")
+    return ("For each object, the Spearman rank correlation across all methods between the measure and the "
+            "error; median over the objects (objects with rho > 0 of those on which neither is constant).\n\n"
+            + "\n".join(lines))
+
+
 def main():
     os.makedirs(FIGURES, exist_ok=True)
-    rows = read_summary()
-    tables(rows)
+    rows, cov_rows = read_summary(), read_summary("coverage.csv")
+    tables(rows, cov_rows)
     figure_gallery()
     for key, name, _ in OBJECTS:
         figure_object(key, name)
@@ -615,6 +826,10 @@ def main():
     for key, name, _ in OBJECTS:
         figure_ext_object(key, name, rows)
     figure_spacing("bump_cap", "Bump cap", methods=tuple(METHODS), filename="ext_path_spacing_bump_cap.png")
+    figure_coverage_example("four_sided_star", "Four-sided star", ["ARAP", "Floater"], rows, cov_rows)
+    figure_coverage_object("animal_head", "Animal head", cov_rows)
+    figure_coverage_summary(cov_rows)
+    figure_coverage_predictors(rows, cov_rows)
     print(f"Figures written to {FIGURES}")
 
 
